@@ -68,7 +68,7 @@ nix run .#yt-transcribe-rocm -- 'https://www.youtube.com/watch?v=JpjXYD2AELg'
 nix run .#yt-transcribe-cuda -- 'https://www.youtube.com/watch?v=JpjXYD2AELg'
 ```
 
-The CUDA app requires `allow-unfree = true` in your Nix configuration. For a one-off run you can also use `NIXPKGS_ALLOW_UNFREE=1 nix run --impure .#yt-transcribe-cuda -- <url>`.
+The CUDA app and `.#cuda` dev shell import nixpkgs with unfree enabled only for that CUDA-specific package set, so no extra `allow-unfree` setup is required for this flake.
 
 ### Run inside the dev shell
 

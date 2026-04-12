@@ -31,17 +31,25 @@
         let
           lib = pkgs.lib;
           isLinuxX86 = pkgs.stdenv.hostPlatform.isLinux && pkgs.stdenv.hostPlatform.isx86_64;
+          pkgsCuda =
+            if isLinuxX86 then
+              import inputs.nixpkgs {
+                system = pkgs.stdenv.hostPlatform.system;
+                config.allowUnfree = true;
+              }
+            else
+              pkgs;
 
           mkWhisperCpp =
-            accelerator:
+            packageSet: accelerator:
             let
-              package = pkgs.whisper-cpp.override (
+              package = packageSet.whisper-cpp.override (
                 {
                   cudaSupport = accelerator == "cuda";
                   rocmSupport = accelerator == "rocm";
                   withSDL = false;
                 }
-                // lib.optionalAttrs (accelerator == "rocm") {
+                // packageSet.lib.optionalAttrs (accelerator == "rocm") {
                   rocmGpuTargets = "gfx1151";
                 }
               );
@@ -50,23 +58,23 @@
               package
             else
               package.overrideAttrs (old: {
-                cmakeFlags = (builtins.filter (flag: !(lib.hasInfix "GGML_HIPBLAS" flag)) old.cmakeFlags) ++ [
+                cmakeFlags = (builtins.filter (flag: !(packageSet.lib.hasInfix "GGML_HIPBLAS" flag)) old.cmakeFlags) ++ [
                   "-DGGML_HIP=ON"
                 ];
               });
 
           mkRuntime =
-            accelerator:
+            packageSet: accelerator:
             let
-              whisperPackage = mkWhisperCpp accelerator;
-              ffmpegPackage = pkgs.ffmpeg.override {
+              whisperPackage = mkWhisperCpp packageSet accelerator;
+              ffmpegPackage = packageSet.ffmpeg.override {
                 withWhisper = true;
                 whisper-cpp = whisperPackage;
               };
             in
             {
               inherit whisperPackage ffmpegPackage;
-              package = pkgs.callPackage ./nix/package.nix {
+              package = packageSet.callPackage ./nix/package.nix {
                 ffmpeg = ffmpegPackage;
                 whisper-cpp = whisperPackage;
               };
@@ -124,11 +132,11 @@
             };
 
           scriptPackages = import ./nix/scripts { inherit pkgs; };
-          cpuRuntime = mkRuntime "cpu";
+          cpuRuntime = mkRuntime pkgs "cpu";
 
           rocmVariantPackages = lib.optionalAttrs isLinuxX86 (
             let
-              runtime = mkRuntime "rocm";
+              runtime = mkRuntime pkgs "rocm";
             in
             {
               yt-transcribe-rocm = runtime.package;
@@ -137,7 +145,7 @@
 
           cudaVariantPackages = lib.optionalAttrs isLinuxX86 (
             let
-              runtime = mkRuntime "cuda";
+              runtime = mkRuntime pkgsCuda "cuda";
             in
             {
               yt-transcribe-cuda = runtime.package;
@@ -160,7 +168,7 @@
 
           rocmShells = lib.optionalAttrs isLinuxX86 (
             let
-              runtime = mkRuntime "rocm";
+              runtime = mkRuntime pkgs "rocm";
             in
             {
               rocm = mkDevShell {
@@ -176,12 +184,12 @@
 
           cudaShells = lib.optionalAttrs isLinuxX86 (
             let
-              runtime = mkRuntime "cuda";
+              runtime = mkRuntime pkgsCuda "cuda";
             in
             {
               cuda = mkDevShell {
                 inherit runtime;
-                acceleratorName = "CUDA build for NVIDIA GPUs (requires allow-unfree)";
+                acceleratorName = "CUDA build for NVIDIA GPUs";
               };
             }
           );
