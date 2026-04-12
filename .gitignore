@@ -1,0 +1,6 @@
+.cache
+bin/
+output
+.direnv/
+result
+*.log
