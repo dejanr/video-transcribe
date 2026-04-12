@@ -4,3 +4,4 @@ output
 .direnv/
 result
 *.log
+output_audio.wav

@@ -1,0 +1,3 @@
+set -euo pipefail
+
+go test ./...
