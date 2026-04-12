@@ -183,3 +183,7 @@ Without direnv:
 nix develop --command check
 nix develop --command build
 ```
+
+## License
+
+GPL-3.0-or-later.

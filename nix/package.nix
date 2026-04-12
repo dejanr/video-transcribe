@@ -31,4 +31,9 @@ buildGoModule {
         ]
       }
   '';
+
+  meta = {
+    license = lib.licenses.gpl3Plus;
+    mainProgram = "yt-transcribe";
+  };
 }
