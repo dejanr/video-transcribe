@@ -1,9 +1,10 @@
-package youtube
+package source
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,20 +20,47 @@ type Chapter struct {
 }
 
 type Metadata struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Channel     string    `json:"channel"`
-	Uploader    string    `json:"uploader"`
-	Duration    int       `json:"duration"`
-	UploadDate  string    `json:"upload_date"`
-	WebpageURL  string    `json:"webpage_url"`
-	OriginalURL string    `json:"original_url"`
-	Description string    `json:"description"`
-	Chapters    []Chapter `json:"chapters"`
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Channel      string    `json:"channel"`
+	Uploader     string    `json:"uploader"`
+	Duration     int       `json:"duration"`
+	UploadDate   string    `json:"upload_date"`
+	WebpageURL   string    `json:"webpage_url"`
+	OriginalURL  string    `json:"original_url"`
+	Description  string    `json:"description"`
+	Extractor    string    `json:"extractor"`
+	ExtractorKey string    `json:"extractor_key"`
+	Chapters     []Chapter `json:"chapters"`
 }
 
 type Client struct {
 	Runner shell.Runner
+}
+
+func (m Metadata) Platform() string {
+	extractorKey := strings.ToLower(strings.TrimSpace(m.ExtractorKey))
+	switch {
+	case strings.HasPrefix(extractorKey, "twitch"):
+		return "twitch"
+	case strings.HasPrefix(extractorKey, "youtube"):
+		return "youtube"
+	}
+
+	for _, rawURL := range []string{m.WebpageURL, m.OriginalURL} {
+		parsed, err := url.Parse(strings.TrimSpace(rawURL))
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(strings.TrimPrefix(parsed.Hostname(), "www."))
+		switch host {
+		case "youtube.com", "youtu.be", "m.youtube.com":
+			return "youtube"
+		case "twitch.tv", "m.twitch.tv", "clips.twitch.tv":
+			return "twitch"
+		}
+	}
+	return ""
 }
 
 func (c Client) FetchMetadata(ctx context.Context, url string) (Metadata, error) {

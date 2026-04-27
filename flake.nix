@@ -1,5 +1,5 @@
 {
-  description = "YouTube audio downloader and local markdown transcription CLI";
+  description = "Video audio downloader and local markdown transcription CLI";
 
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
@@ -58,9 +58,11 @@
               package
             else
               package.overrideAttrs (old: {
-                cmakeFlags = (builtins.filter (flag: !(packageSet.lib.hasInfix "GGML_HIPBLAS" flag)) old.cmakeFlags) ++ [
-                  "-DGGML_HIP=ON"
-                ];
+                cmakeFlags =
+                  (builtins.filter (flag: !(packageSet.lib.hasInfix "GGML_HIPBLAS" flag)) old.cmakeFlags)
+                  ++ [
+                    "-DGGML_HIP=ON"
+                  ];
               });
 
           mkRuntime =
@@ -98,7 +100,9 @@
 
                 {202}▶ app{reset}
 
+                  video-transcribe
                   yt-transcribe
+                  tw-transcribe
 
                 {202}▶ accelerator{reset}
 
@@ -106,7 +110,8 @@
               '';
 
               devshell.startup.project-env.text = ''
-                export YT_TRANSCRIBE_MODEL_DIR="''${YT_TRANSCRIBE_MODEL_DIR:-$HOME/.cache/yt-transcribe/models}"
+                export VIDEO_TRANSCRIBE_MODEL_DIR="''${VIDEO_TRANSCRIBE_MODEL_DIR:-''${YT_TRANSCRIBE_MODEL_DIR:-$HOME/.cache/video-transcribe/models}}"
+                export YT_TRANSCRIBE_MODEL_DIR="$VIDEO_TRANSCRIBE_MODEL_DIR"
               '';
 
               packages = [
@@ -139,7 +144,9 @@
               runtime = mkRuntime pkgs "rocm";
             in
             {
+              video-transcribe-rocm = runtime.package;
               yt-transcribe-rocm = runtime.package;
+              tw-transcribe-rocm = runtime.package;
             }
           );
 
@@ -148,21 +155,39 @@
               runtime = mkRuntime pkgsCuda "cuda";
             in
             {
+              video-transcribe-cuda = runtime.package;
               yt-transcribe-cuda = runtime.package;
+              tw-transcribe-cuda = runtime.package;
             }
           );
 
           rocmApps = lib.optionalAttrs isLinuxX86 {
+            video-transcribe-rocm = {
+              type = "app";
+              program = "${config.packages.video-transcribe-rocm}/bin/video-transcribe";
+            };
             yt-transcribe-rocm = {
               type = "app";
               program = "${config.packages.yt-transcribe-rocm}/bin/yt-transcribe";
             };
+            tw-transcribe-rocm = {
+              type = "app";
+              program = "${config.packages.tw-transcribe-rocm}/bin/tw-transcribe";
+            };
           };
 
           cudaApps = lib.optionalAttrs isLinuxX86 {
+            video-transcribe-cuda = {
+              type = "app";
+              program = "${config.packages.video-transcribe-cuda}/bin/video-transcribe";
+            };
             yt-transcribe-cuda = {
               type = "app";
               program = "${config.packages.yt-transcribe-cuda}/bin/yt-transcribe";
+            };
+            tw-transcribe-cuda = {
+              type = "app";
+              program = "${config.packages.tw-transcribe-cuda}/bin/tw-transcribe";
             };
           };
 
@@ -200,19 +225,31 @@
           packages =
             scriptPackages
             // {
+              video-transcribe = cpuRuntime.package;
+              video-transcribe-cpu = cpuRuntime.package;
               yt-transcribe = cpuRuntime.package;
               yt-transcribe-cpu = cpuRuntime.package;
-              default = config.packages.yt-transcribe;
+              tw-transcribe = cpuRuntime.package;
+              tw-transcribe-cpu = cpuRuntime.package;
+              default = config.packages.video-transcribe;
             }
             // rocmVariantPackages
             // cudaVariantPackages;
 
           apps = {
+            video-transcribe = {
+              type = "app";
+              program = "${config.packages.video-transcribe}/bin/video-transcribe";
+            };
             yt-transcribe = {
               type = "app";
               program = "${config.packages.yt-transcribe}/bin/yt-transcribe";
             };
-            default = config.apps.yt-transcribe;
+            tw-transcribe = {
+              type = "app";
+              program = "${config.packages.tw-transcribe}/bin/tw-transcribe";
+            };
+            default = config.apps.video-transcribe;
           }
           // rocmApps
           // cudaApps;

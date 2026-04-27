@@ -1,106 +1,15 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
-	"github.com/dejanr/video-transcribe/internal/pipeline"
+	"github.com/dejanr/video-transcribe/internal/app"
 )
 
-const usage = `yt-transcribe downloads a YouTube video's audio, transcribes it locally,
-and renders a markdown transcript for later summarization.
-
-Usage:
-  yt-transcribe [flags] <youtube-url>
-
-Flags:
-  -output-dir string
-        Directory where artifacts are written. (default "./output")
-  -model string
-        whisper.cpp model to use. (default "large-v3-turbo")
-  -backend string
-        Transcription backend: whisper-cli or ffmpeg-whisper. (default "whisper-cli")
-  -ffmpeg-whisper-queue-seconds int
-        Queue size in seconds for the ffmpeg whisper filter. Higher values trade latency for throughput. (default 15)
-  -language string
-        Spoken language for whisper.cpp, or auto to detect. (default "en")
-  -no-gpu
-        Disable GPU acceleration even when the selected backend was built with GPU support.
-  -gpu-device int
-        GPU device index for the ffmpeg whisper backend. (default 0)
-  -keep
-        Keep downloaded and intermediate artifacts instead of only transcript.md.
-  -force
-        Re-run every stage even if artifacts already exist.
-  -chunk-seconds int
-        Target markdown chunk size in seconds. (default 45)
-  -trace
-        Print stage timings and external command timings.
-`
-
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-}
-
-func run(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("%s", usage)
-	}
-	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Print(usage)
-		return nil
-	}
-	if args[0] == "transcribe" {
-		return fmt.Errorf("'transcribe' subcommand was removed; use yt-transcribe [flags] <youtube-url>\n\n%s", usage)
-	}
-	return transcribeCommand(args)
-}
-
-func transcribeCommand(args []string) error {
-	fs := flag.NewFlagSet("yt-transcribe", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-
-	cfg := pipeline.Config{UseGPU: true}
-	var noGPU bool
-	fs.StringVar(&cfg.OutputDir, "output-dir", "./output", "Directory where artifacts are written.")
-	fs.StringVar(&cfg.ModelName, "model", "large-v3-turbo", "whisper.cpp model to use.")
-	fs.StringVar(&cfg.Backend, "backend", "whisper-cli", "Transcription backend: whisper-cli or ffmpeg-whisper.")
-	fs.IntVar(&cfg.FFmpegWhisperQueueSeconds, "ffmpeg-whisper-queue-seconds", 15, "Queue size in seconds for the ffmpeg whisper filter. Higher values trade latency for throughput.")
-	fs.StringVar(&cfg.Language, "language", "en", "Spoken language for whisper.cpp, or auto to detect.")
-	fs.BoolVar(&noGPU, "no-gpu", false, "Disable GPU acceleration even when the selected backend was built with GPU support.")
-	fs.IntVar(&cfg.GPUDevice, "gpu-device", 0, "GPU device index for the ffmpeg whisper backend.")
-	fs.BoolVar(&cfg.KeepArtifacts, "keep", false, "Keep downloaded and intermediate artifacts instead of only transcript.md.")
-	fs.BoolVar(&cfg.Force, "force", false, "Re-run every stage even if artifacts already exist.")
-	fs.IntVar(&cfg.ChunkSeconds, "chunk-seconds", 45, "Target markdown chunk size in seconds.")
-	fs.BoolVar(&cfg.Trace, "trace", false, "Print stage timings and external command timings.")
-
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("expected exactly one YouTube URL\n\n%s", usage)
-	}
-
-	cfg.UseGPU = !noGPU
-	cfg.URL = fs.Arg(0)
-	result, err := pipeline.Run(cfg)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("done\n")
-	fmt.Printf("video: %s\n", result.Metadata.Title)
-	fmt.Printf("workspace: %s\n", result.WorkspaceDir)
-	fmt.Printf("markdown: %s\n", result.MarkdownPath)
-	if result.TempDir != "" {
-		fmt.Printf("tmp: %s\n", result.TempDir)
-	}
-	if result.RawTranscriptPath != "" {
-		fmt.Printf("raw transcript: %s\n", result.RawTranscriptPath)
-	}
-	return nil
 }

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dejanr/video-transcribe/internal/source"
 	"github.com/dejanr/video-transcribe/internal/whisper"
-	"github.com/dejanr/video-transcribe/internal/youtube"
 )
 
 type Options struct {
@@ -26,7 +26,7 @@ type chunk struct {
 	Text    string
 }
 
-func Markdown(metadata youtube.Metadata, output whisper.Output, options Options) string {
+func Markdown(metadata source.Metadata, output whisper.Output, options Options) string {
 	if options.ChunkSeconds <= 0 {
 		options.ChunkSeconds = 45
 	}
@@ -38,7 +38,7 @@ func Markdown(metadata youtube.Metadata, output whisper.Output, options Options)
 	b.WriteString("# ")
 	b.WriteString(metadata.Title)
 	b.WriteString("\n\n")
-	b.WriteString("Generated from the full YouTube audio track using yt-dlp, ffmpeg, and whisper.cpp.")
+	b.WriteString("Generated from the full source audio track using yt-dlp, ffmpeg, and whisper.cpp.")
 	if options.RawTranscriptPath != "" {
 		b.WriteString(" Review the raw JSON transcript when you need segment-level timestamps.")
 	} else {
@@ -56,10 +56,13 @@ func Markdown(metadata youtube.Metadata, output whisper.Output, options Options)
 	return b.String()
 }
 
-func writeFrontmatter(b *strings.Builder, metadata youtube.Metadata, options Options) {
+func writeFrontmatter(b *strings.Builder, metadata source.Metadata, options Options) {
 	fmt.Fprintf(b, "---\n")
 	fmt.Fprintf(b, "title: %q\n", metadata.Title)
-	fmt.Fprintf(b, "video_id: %q\n", metadata.ID)
+	fmt.Fprintf(b, "media_id: %q\n", metadata.ID)
+	if platform := metadata.Platform(); platform != "" {
+		fmt.Fprintf(b, "source_platform: %q\n", platform)
+	}
 	fmt.Fprintf(b, "channel: %q\n", choose(metadata.Channel, metadata.Uploader))
 	fmt.Fprintf(b, "source_url: %q\n", choose(metadata.WebpageURL, options.SourceURL))
 	fmt.Fprintf(b, "duration_seconds: %d\n", metadata.Duration)
@@ -78,8 +81,8 @@ func writeFrontmatter(b *strings.Builder, metadata youtube.Metadata, options Opt
 	fmt.Fprintf(b, "---\n")
 }
 
-func writeChapters(b *strings.Builder, chapters []youtube.Chapter, chunks []chunk) {
-	sorted := append([]youtube.Chapter(nil), chapters...)
+func writeChapters(b *strings.Builder, chapters []source.Chapter, chunks []chunk) {
+	sorted := append([]source.Chapter(nil), chapters...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StartTime < sorted[j].StartTime })
 
 	for _, chapter := range sorted {

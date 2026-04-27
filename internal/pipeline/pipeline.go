@@ -12,8 +12,8 @@ import (
 	"github.com/dejanr/video-transcribe/internal/audio"
 	"github.com/dejanr/video-transcribe/internal/render"
 	"github.com/dejanr/video-transcribe/internal/shell"
+	"github.com/dejanr/video-transcribe/internal/source"
 	"github.com/dejanr/video-transcribe/internal/whisper"
-	"github.com/dejanr/video-transcribe/internal/youtube"
 )
 
 type Config struct {
@@ -32,7 +32,7 @@ type Config struct {
 }
 
 type Result struct {
-	Metadata          youtube.Metadata
+	Metadata          source.Metadata
 	WorkspaceDir      string
 	TempDir           string
 	MarkdownPath      string
@@ -73,14 +73,14 @@ func Run(config Config) (Result, error) {
 
 	ctx := context.Background()
 	runner := shell.Runner{Trace: config.Trace}
-	yt := youtube.Client{Runner: runner}
+	sourceClient := source.Client{Runner: runner}
 	whisperClient := whisper.Client{Runner: runner}
 	normalizer := audio.Normalizer{Runner: runner}
 	totalStartedAt := time.Now()
 
-	fmt.Println("==> fetching YouTube metadata")
+	fmt.Println("==> fetching source metadata")
 	metadataStartedAt := time.Now()
-	metadata, err := yt.FetchMetadata(ctx, config.URL)
+	metadata, err := sourceClient.FetchMetadata(ctx, config.URL)
 	if err != nil {
 		return Result{}, err
 	}
@@ -112,7 +112,7 @@ func Run(config Config) (Result, error) {
 
 	fmt.Println("==> downloading audio")
 	audioStartedAt := time.Now()
-	audioPath, err := yt.DownloadAudio(ctx, config.URL, tempDir, workspaceDir, config.Force)
+	audioPath, err := sourceClient.DownloadAudio(ctx, config.URL, tempDir, workspaceDir, config.Force)
 	if err != nil {
 		return Result{}, err
 	}
@@ -255,17 +255,16 @@ func formatBytes(value int64) string {
 }
 
 func defaultModelDir() (string, error) {
-	if value := strings.TrimSpace(os.Getenv("YT_TRANSCRIBE_MODEL_DIR")); value != "" {
-		return filepath.Abs(value)
-	}
-	if value := strings.TrimSpace(os.Getenv("YT_NOTES_MODEL_DIR")); value != "" {
-		return filepath.Abs(value)
+	for _, key := range []string{"VIDEO_TRANSCRIBE_MODEL_DIR", "YT_TRANSCRIBE_MODEL_DIR", "YT_NOTES_MODEL_DIR"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return filepath.Abs(value)
+		}
 	}
 	cacheRoot, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user cache dir: %w", err)
 	}
-	return filepath.Join(cacheRoot, "yt-transcribe", "models"), nil
+	return filepath.Join(cacheRoot, "video-transcribe", "models"), nil
 }
 
 func pruneWorkspace(workspaceDir string, markdownPath string) error {
@@ -285,7 +284,7 @@ func pruneWorkspace(workspaceDir string, markdownPath string) error {
 	return nil
 }
 
-func workspaceDir(outputRoot string, metadata youtube.Metadata) (string, error) {
+func workspaceDir(outputRoot string, metadata source.Metadata) (string, error) {
 	root, err := filepath.Abs(outputRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve output dir: %w", err)

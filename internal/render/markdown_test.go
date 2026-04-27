@@ -5,17 +5,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dejanr/video-transcribe/internal/source"
 	"github.com/dejanr/video-transcribe/internal/whisper"
-	"github.com/dejanr/video-transcribe/internal/youtube"
 )
 
 func TestMarkdownIncludesFrontmatterAndTranscript(t *testing.T) {
-	metadata := youtube.Metadata{
-		ID:         "abc123",
-		Title:      "Example Video",
-		Channel:    "Example Channel",
-		Duration:   90,
-		WebpageURL: "https://example.com/watch?v=abc123",
+	metadata := source.Metadata{
+		ID:           "abc123",
+		Title:        "Example Video",
+		Channel:      "Example Channel",
+		Duration:     90,
+		WebpageURL:   "https://example.com/watch?v=abc123",
+		ExtractorKey: "Youtube",
 	}
 	output := whisper.Output{}
 	output.Result.Language = "en"
@@ -36,6 +37,8 @@ func TestMarkdownIncludesFrontmatterAndTranscript(t *testing.T) {
 
 	checks := []string{
 		`title: "Example Video"`,
+		`media_id: "abc123"`,
+		`source_platform: "youtube"`,
 		`model: "base"`,
 		`raw_transcript: "transcript.raw.json"`,
 		"Review the raw JSON transcript when you need segment-level timestamps.",
@@ -52,7 +55,7 @@ func TestMarkdownIncludesFrontmatterAndTranscript(t *testing.T) {
 }
 
 func TestMarkdownOmitsRawTranscriptWhenNotKept(t *testing.T) {
-	metadata := youtube.Metadata{ID: "abc123", Title: "Example Video", Duration: 30}
+	metadata := source.Metadata{ID: "abc123", Title: "Example Video", Duration: 30}
 	output := whisper.Output{}
 	output.Result.Language = "en"
 	output.Transcription = []whisper.Segment{segment(0, 5000, "Hello there")}
