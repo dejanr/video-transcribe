@@ -255,16 +255,7 @@ func formatBytes(value int64) string {
 }
 
 func defaultModelDir() (string, error) {
-	for _, key := range []string{"VIDEO_TRANSCRIBE_MODEL_DIR", "YT_TRANSCRIBE_MODEL_DIR", "YT_NOTES_MODEL_DIR"} {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return filepath.Abs(value)
-		}
-	}
-	cacheRoot, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user cache dir: %w", err)
-	}
-	return filepath.Join(cacheRoot, "video-transcribe", "models"), nil
+	return whisper.ModelDir()
 }
 
 func pruneWorkspace(workspaceDir string, markdownPath string) error {

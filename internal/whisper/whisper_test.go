@@ -1,10 +1,58 @@
 package whisper
 
 import (
+	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dejanr/video-transcribe/internal/shell"
 )
+
+func TestEnsureModelPublishesOnlyCompleteDownloads(t *testing.T) {
+	binDir := t.TempDir()
+	modelDir := t.TempDir()
+	downloader := filepath.Join(binDir, "whisper-cpp-download-ggml-model")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	client := Client{Runner: shell.Runner{KillProcessGroup: true}}
+	for _, test := range []struct {
+		name    string
+		script  string
+		wantErr bool
+	}{
+		{"failed", "#!/bin/sh\nprintf partial > ggml-small.bin\nexit 1\n", true},
+		{"empty", "#!/bin/sh\n: > ggml-small.bin\n", true},
+		{"complete", "#!/bin/sh\nprintf complete > ggml-small.bin\n", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(downloader, []byte(test.script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			modelPath, err := client.EnsureModel(context.Background(), modelDir, "small")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("EnsureModel error = %v", err)
+			}
+			finalPath := filepath.Join(modelDir, "ggml-small.bin")
+			if test.wantErr {
+				if _, err := os.Stat(finalPath); !os.IsNotExist(err) {
+					t.Fatal("failed download poisoned the model cache")
+				}
+			} else {
+				content, err := os.ReadFile(modelPath)
+				if err != nil || string(content) != "complete" {
+					t.Fatalf("model = %q, %v", content, err)
+				}
+			}
+			entries, _ := os.ReadDir(modelDir)
+			for _, entry := range entries {
+				if entry.IsDir() {
+					t.Fatal("download workspace was not cleaned")
+				}
+			}
+		})
+	}
+}
 
 func TestDecodeFFmpegSegments(t *testing.T) {
 	body := []byte("{\"start\":0,\"end\":3000,\"text\":\" hello there \",\"turn\":false}\n{\"start\":3000,\"end\":5500,\"text\":\" general kenobi \",\"turn\":false}\n")

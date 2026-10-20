@@ -43,6 +43,19 @@ type ffmpegOutputSegment struct {
 	Text  string `json:"text"`
 }
 
+func ModelDir() (string, error) {
+	for _, key := range []string{"VIDEO_TRANSCRIBE_MODEL_DIR", "YT_TRANSCRIBE_MODEL_DIR", "YT_NOTES_MODEL_DIR"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return filepath.Abs(value)
+		}
+	}
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user cache dir: %w", err)
+	}
+	return filepath.Join(cacheRoot, "video-transcribe", "models"), nil
+}
+
 func (c Client) EnsureModel(ctx context.Context, modelDir string, modelName string) (string, error) {
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		return "", fmt.Errorf("create model dir: %w", err)
@@ -53,11 +66,24 @@ func (c Client) EnsureModel(ctx context.Context, modelDir string, modelName stri
 		return modelPath, nil
 	}
 
-	if err := c.Runner.RunInDir(ctx, modelDir, "whisper-cpp-download-ggml-model", modelName); err != nil {
+	downloadDir, err := os.MkdirTemp(modelDir, ".download-*")
+	if err != nil {
+		return "", fmt.Errorf("create model download directory: %w", err)
+	}
+	defer os.RemoveAll(downloadDir)
+	if err := c.Runner.RunInDir(ctx, downloadDir, "whisper-cpp-download-ggml-model", modelName); err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(modelPath); err != nil {
+	downloadPath := filepath.Join(downloadDir, filepath.Base(modelPath))
+	info, err := os.Stat(downloadPath)
+	if err != nil {
 		return "", fmt.Errorf("downloaded model is missing: %w", err)
+	}
+	if info.Size() == 0 {
+		return "", fmt.Errorf("downloaded model is empty")
+	}
+	if err := os.Rename(downloadPath, modelPath); err != nil {
+		return "", fmt.Errorf("publish downloaded model: %w", err)
 	}
 	return modelPath, nil
 }

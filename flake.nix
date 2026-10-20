@@ -47,10 +47,11 @@
                 {
                   cudaSupport = accelerator == "cuda";
                   rocmSupport = accelerator == "rocm";
+                  vulkanSupport = accelerator == "vulkan";
                   withSDL = false;
                 }
                 // packageSet.lib.optionalAttrs (accelerator == "rocm") {
-                  rocmGpuTargets = "gfx1151";
+                  rocmGpuTargets = "gfx1151;gfx1201";
                 }
               );
             in
@@ -73,12 +74,32 @@
                 withWhisper = true;
                 whisper-cpp = whisperPackage;
               };
-            in
-            {
-              inherit whisperPackage ffmpegPackage;
+              subtitleBackend = packageSet.callPackage ./nix/package.nix {
+                ffmpeg = packageSet.ffmpeg;
+                whisper-cpp = whisperPackage;
+                subtitleWhisperCPU = mkWhisperCpp packageSet "cpu";
+                subtitleWhisperVulkan = if accelerator != "cuda" then mkWhisperCpp packageSet "vulkan" else null;
+                subtitleWhisperROCm =
+                  if
+                    isLinuxX86
+                    && builtins.elem accelerator [
+                      "cpu"
+                      "rocm"
+                    ]
+                  then
+                    mkWhisperCpp packageSet "rocm"
+                  else
+                    null;
+              };
               package = packageSet.callPackage ./nix/package.nix {
                 ffmpeg = ffmpegPackage;
                 whisper-cpp = whisperPackage;
+              };
+            in
+            {
+              inherit whisperPackage ffmpegPackage package;
+              subtitlePackage = packageSet.callPackage ./nix/subtitle.nix {
+                backend = subtitleBackend;
               };
             };
 
@@ -103,6 +124,7 @@
                   video-transcribe
                   yt-transcribe
                   tw-transcribe
+                  audio-transcribe-subtitles
 
                 {202}▶ accelerator{reset}
 
@@ -116,6 +138,7 @@
 
               packages = [
                 runtime.package
+                runtime.subtitlePackage
                 config.packages.cleanup
                 config.packages.fmt
                 config.packages.check
@@ -138,6 +161,7 @@
 
           scriptPackages = import ./nix/scripts { inherit pkgs; };
           cpuRuntime = mkRuntime pkgs "cpu";
+          vulkanRuntime = mkRuntime pkgs "vulkan";
 
           rocmVariantPackages = lib.optionalAttrs isLinuxX86 (
             let
@@ -147,6 +171,7 @@
               video-transcribe-rocm = runtime.package;
               yt-transcribe-rocm = runtime.package;
               tw-transcribe-rocm = runtime.package;
+              audio-transcribe-subtitles-rocm = runtime.subtitlePackage;
             }
           );
 
@@ -158,10 +183,15 @@
               video-transcribe-cuda = runtime.package;
               yt-transcribe-cuda = runtime.package;
               tw-transcribe-cuda = runtime.package;
+              audio-transcribe-subtitles-cuda = runtime.subtitlePackage;
             }
           );
 
           rocmApps = lib.optionalAttrs isLinuxX86 {
+            audio-transcribe-subtitles-rocm = {
+              type = "app";
+              program = "${config.packages.audio-transcribe-subtitles-rocm}/bin/audio-transcribe-subtitles";
+            };
             video-transcribe-rocm = {
               type = "app";
               program = "${config.packages.video-transcribe-rocm}/bin/video-transcribe";
@@ -177,6 +207,10 @@
           };
 
           cudaApps = lib.optionalAttrs isLinuxX86 {
+            audio-transcribe-subtitles-cuda = {
+              type = "app";
+              program = "${config.packages.audio-transcribe-subtitles-cuda}/bin/audio-transcribe-subtitles";
+            };
             video-transcribe-cuda = {
               type = "app";
               program = "${config.packages.video-transcribe-cuda}/bin/video-transcribe";
@@ -198,7 +232,7 @@
             {
               rocm = mkDevShell {
                 inherit runtime;
-                acceleratorName = "ROCm build optimized for Strix Halo (gfx1151)";
+                acceleratorName = "ROCm build for Strix Halo (gfx1151) and Radeon RX 9070 series (gfx1201)";
                 extraPackages = [
                   pkgs.rocmPackages.clr
                   pkgs.rocmPackages.rocm-smi
@@ -225,6 +259,8 @@
           packages =
             scriptPackages
             // {
+              audio-transcribe-subtitles = cpuRuntime.subtitlePackage;
+              audio-transcribe-subtitles-vulkan = vulkanRuntime.subtitlePackage;
               video-transcribe = cpuRuntime.package;
               video-transcribe-cpu = cpuRuntime.package;
               yt-transcribe = cpuRuntime.package;
@@ -237,6 +273,14 @@
             // cudaVariantPackages;
 
           apps = {
+            audio-transcribe-subtitles-vulkan = {
+              type = "app";
+              program = "${config.packages.audio-transcribe-subtitles-vulkan}/bin/audio-transcribe-subtitles";
+            };
+            audio-transcribe-subtitles = {
+              type = "app";
+              program = "${config.packages.audio-transcribe-subtitles}/bin/audio-transcribe-subtitles";
+            };
             video-transcribe = {
               type = "app";
               program = "${config.packages.video-transcribe}/bin/video-transcribe";

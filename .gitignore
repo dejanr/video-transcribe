@@ -5,3 +5,5 @@ output
 result
 *.log
 output_audio.wav
+__pycache__/
+*.pyc

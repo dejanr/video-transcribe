@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,16 +14,41 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
 type Runner struct {
-	Trace bool
+	Trace            bool
+	Stdout           io.Writer
+	KillProcessGroup bool
+}
+
+func (r Runner) stdout() io.Writer {
+	if r.Stdout != nil {
+		return r.Stdout
+	}
+	return os.Stdout
+}
+
+func (r Runner) command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	if r.KillProcessGroup {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
+	}
+	return cmd
 }
 
 func (r Runner) Run(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = os.Stdout
+	cmd := r.command(ctx, name, args...)
+	cmd.Stdout = r.stdout()
 	cmd.Stderr = os.Stderr
 	startedAt := time.Now()
 	r.traceCommand("start", cmd.Dir, name, args, startedAt, nil)
@@ -35,9 +61,9 @@ func (r Runner) Run(ctx context.Context, name string, args ...string) error {
 }
 
 func (r Runner) RunInDir(ctx context.Context, dir string, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := r.command(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = r.stdout()
 	cmd.Stderr = os.Stderr
 	startedAt := time.Now()
 	r.traceCommand("start", cmd.Dir, name, args, startedAt, nil)
@@ -50,7 +76,7 @@ func (r Runner) RunInDir(ctx context.Context, dir string, name string, args ...s
 }
 
 func (r Runner) Capture(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := r.command(ctx, name, args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
