@@ -17,17 +17,19 @@ subsequent runs work offline.
 Read the [subtitle guide](docs/subtitles.md) for controls, audio selection,
 automatic hardware acceleration, speech detection, tuning, and troubleshooting.
 
-### Video URL → markdown transcript
+### Video URL or local file → markdown transcript
 
 ```bash
 nix run .#video-transcribe -- 'https://www.youtube.com/watch?v=JpjXYD2AELg'
+nix run .#video-transcribe -- --language auto /path/to/recording.wav
 ```
 
-Downloads and transcribes audio locally. `yt-transcribe` and `tw-transcribe` are
-aliases; `nix run .` also starts this CLI. The default output is `transcript.md`.
+Downloads or copies source audio and transcribes it locally, with automatic GPU
+selection. `yt-transcribe` and `tw-transcribe` are aliases; `nix run .` also starts
+this CLI. The default output is `transcript.md`.
 
-Read the [video guide](docs/video-transcribe.md) for Twitch examples, accelerator
-builds, artifacts, and cleanup. Both apps share its [model cache](docs/video-transcribe.md#model-cache).
+Read the [video guide](docs/video-transcribe.md) for Twitch and local-file examples,
+accelerator builds, artifacts, and cleanup. Both apps share its [model cache](docs/video-transcribe.md#model-cache).
 
 ## Development
 

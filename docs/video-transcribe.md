@@ -2,7 +2,7 @@
 
 [Project overview](../README.md)
 
-`video-transcribe` downloads audio from a supported video URL, transcribes the full spoken track locally, and renders a markdown transcript that is easy to summarize or iterate on later.
+`video-transcribe` accepts a supported video URL or a local media file, transcribes the full spoken track locally, and renders a markdown transcript that is easy to summarize or iterate on later.
 
 It works well for normal YouTube videos and Twitch archived broadcasts such as `https://www.twitch.tv/videos/...`. It is not focused on live streams.
 
@@ -32,14 +32,14 @@ If you pass `--keep`, the full artifact set is preserved:
 output/
   <media-id>-<slug>/
     metadata.json
-    audio.<ext>
+    audio.<ext>  # source.<ext> for local files
     audio.wav
     transcript.raw.json
     transcript.md
     tmp/
       <unique-run-id>/
         metadata.json
-        audio.<ext>
+        audio.<ext>  # source.<ext> for local files
         audio.wav
         transcript.raw.json
         transcript.md
@@ -47,7 +47,7 @@ output/
 
 ## Why this approach
 
-- `yt-dlp` handles source resolution and audio download
+- `yt-dlp` handles remote source resolution and audio download; local files bypass it
 - `ffmpeg` normalizes audio for `whisper-cli`, and can also run the Whisper filter directly
 - `whisper.cpp` keeps transcription local and reproducible
 - markdown stays human-friendly, raw JSON stays machine-friendly
@@ -74,14 +74,24 @@ For Twitch archived broadcasts:
 nix run .#tw-transcribe -- 'https://www.twitch.tv/videos/2097173208'
 ```
 
-That default app is a portable CPU build. For GPU builds on `x86_64-linux` use one of the accelerator-specific apps instead:
+The default app detects accessible GPU devices at runtime and selects CUDA for NVIDIA, ROCm for Strix Halo (`gfx1151`) and Radeon RX 9070 series (`gfx1201`), or Vulkan for other GPUs. CPU is the last fallback. Only the selected variant is built; if its Nix build fails, the launcher tries the next GPU option before CPU. It prints its selection to stderr.
+
+Selection is a GPU-first heuristic, not a benchmark. GPU drivers must already be installed and device nodes accessible to your user. Vulkan also requires a working Vulkan driver. Transcription errors are returned directly, not retried as CPU runs. This is separate from the subtitle launcher's [inference-validated backend selection](subtitles.md#backend-policy).
+
+To bypass detection, use an explicit accelerator app:
 
 ```bash
 # AMD ROCm build for Strix Halo (gfx1151) and Radeon RX 9070 series (gfx1201)
 nix run .#video-transcribe-rocm -- 'https://www.twitch.tv/videos/2097173208'
 
-# NVIDIA CUDA build
+# NVIDIA CUDA build (x86_64-linux)
 nix run .#video-transcribe-cuda -- 'https://www.youtube.com/watch?v=JpjXYD2AELg'
+
+# Vulkan build (AMD, Intel, and other Vulkan-capable GPUs)
+nix run .#video-transcribe-vulkan -- --language auto /path/to/recording.wav
+
+# Explicit CPU build
+nix run .#video-transcribe-cpu -- --language auto /path/to/recording.wav
 ```
 
 The CUDA app and `.#cuda` dev shell import nixpkgs with unfree enabled only for that CUDA-specific package set, so no extra `allow-unfree` setup is required for this flake.
@@ -106,6 +116,21 @@ nix develop .#rocm
 nix develop .#cuda
 ```
 
+### Transcribe a local file
+
+Pass a plain file path or a `file://` URL:
+
+```bash
+nix run .#video-transcribe -- --language auto 'file:///path/to/recording.wav'
+
+# Plain paths work too
+video-transcribe --language auto /path/to/recording.wav
+```
+
+Local audio and video files bypass `yt-dlp`. `ffprobe` reads the duration and checks for an audio stream; FFmpeg normalizes a copy for either transcription backend. The original file is never modified. Use `--keep` to preserve the source copy as `source.<ext>` alongside the normalized `audio.wav`. Local output folders use a file-identity hash and filename; changing the file size or modification time creates a new workspace rather than reusing stale transcripts.
+
+The default language is English; use `--language auto` or specify the recording's language.
+
 ### Try the ffmpeg whisper backend
 
 ```bash
@@ -119,11 +144,14 @@ This backend uses FFmpeg 8's `whisper` filter, which can be faster on long-form 
 
 ## Accelerator notes
 
-- `video-transcribe` / `video-transcribe-cpu`: portable CPU build
-- `yt-transcribe` and `tw-transcribe`: aliases to the same CPU package
+- `video-transcribe`, `yt-transcribe`, and `tw-transcribe`: automatic GPU-first selection, including in the default dev shell
+- `video-transcribe-cpu`: portable CPU build
+- `video-transcribe-vulkan`: Vulkan GPU build on both supported Linux architectures
 - `video-transcribe-rocm`: ROCm build for Strix Halo (`gfx1151`) and Radeon RX 9070 series (`gfx1201`)
 - `video-transcribe-cuda`: CUDA build for NVIDIA GPUs on `x86_64-linux`
-- `--no-gpu` forces CPU inference even when the selected build supports GPU execution
+- `--no-gpu` selects the CPU build in the automatic launcher, or disables GPU inference in an explicit accelerator build
+- the automatic launcher requires Nix at runtime and builds from its bundled flake snapshot, regardless of the current working directory
+- the `build` helper still produces an unwrapped Go binary; its acceleration depends on the `whisper-cli` / FFmpeg available on `PATH`
 - `--gpu-device` currently applies to the `ffmpeg-whisper` backend
 - default output keeps only `transcript.md`
 - `--keep` preserves metadata, audio, raw transcript JSON, and `tmp/`
@@ -131,7 +159,7 @@ This backend uses FFmpeg 8's `whisper` filter, which can be faster on long-form 
 ## Flags
 
 ```bash
-video-transcribe [flags] <url>
+video-transcribe [flags] <source>
 
   -output-dir string
         Directory where artifacts are written. (default "./output")

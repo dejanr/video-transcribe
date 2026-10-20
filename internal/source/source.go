@@ -41,6 +41,8 @@ type Client struct {
 func (m Metadata) Platform() string {
 	extractorKey := strings.ToLower(strings.TrimSpace(m.ExtractorKey))
 	switch {
+	case extractorKey == "local":
+		return "local"
 	case strings.HasPrefix(extractorKey, "twitch"):
 		return "twitch"
 	case strings.HasPrefix(extractorKey, "youtube"):
@@ -64,6 +66,14 @@ func (m Metadata) Platform() string {
 }
 
 func (c Client) FetchMetadata(ctx context.Context, url string) (Metadata, error) {
+	path, err := localPath(url)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if path != "" {
+		return c.fetchLocalMetadata(ctx, path)
+	}
+
 	output, err := c.Runner.Capture(ctx, "yt-dlp", "--no-warnings", "--dump-single-json", "--no-download", url)
 	if err != nil {
 		return Metadata{}, err
@@ -83,6 +93,14 @@ func (c Client) FetchMetadata(ctx context.Context, url string) (Metadata, error)
 }
 
 func (c Client) DownloadAudio(ctx context.Context, url string, tempDir string, workspaceDir string, force bool) (string, error) {
+	path, err := localPath(url)
+	if err != nil {
+		return "", err
+	}
+	if path != "" {
+		return copyLocalAudio(path, tempDir, workspaceDir)
+	}
+
 	if !force {
 		if existing, ok := existingAudio(workspaceDir); ok {
 			return existing, nil

@@ -38,7 +38,11 @@ func Markdown(metadata source.Metadata, output whisper.Output, options Options) 
 	b.WriteString("# ")
 	b.WriteString(metadata.Title)
 	b.WriteString("\n\n")
-	b.WriteString("Generated from the full source audio track using yt-dlp, ffmpeg, and whisper.cpp.")
+	if metadata.Platform() == "local" {
+		b.WriteString("Generated from a local media file using ffmpeg and whisper.cpp.")
+	} else {
+		b.WriteString("Generated from the full source audio track using yt-dlp, ffmpeg, and whisper.cpp.")
+	}
 	if options.RawTranscriptPath != "" {
 		b.WriteString(" Review the raw JSON transcript when you need segment-level timestamps.")
 	} else {

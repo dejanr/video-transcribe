@@ -41,7 +41,7 @@ type Result struct {
 
 func Run(config Config) (Result, error) {
 	if strings.TrimSpace(config.URL) == "" {
-		return Result{}, fmt.Errorf("url is required")
+		return Result{}, fmt.Errorf("source URL or local file is required")
 	}
 	if strings.TrimSpace(config.OutputDir) == "" {
 		config.OutputDir = "./output"
@@ -110,14 +110,14 @@ func Run(config Config) (Result, error) {
 		return Result{}, err
 	}
 
-	fmt.Println("==> downloading audio")
+	fmt.Println("==> preparing source audio")
 	audioStartedAt := time.Now()
 	audioPath, err := sourceClient.DownloadAudio(ctx, config.URL, tempDir, workspaceDir, config.Force)
 	if err != nil {
 		return Result{}, err
 	}
-	traceStage(config.Trace, "download audio", audioStartedAt)
-	traceFile(config.Trace, "downloaded-audio", audioPath)
+	traceStage(config.Trace, "prepare audio", audioStartedAt)
+	traceFile(config.Trace, "source-audio", audioPath)
 
 	fmt.Println("==> normalizing audio for speech-to-text")
 	normalizeStartedAt := time.Now()

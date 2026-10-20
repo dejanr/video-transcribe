@@ -76,6 +76,19 @@ func TestMarkdownOmitsRawTranscriptWhenNotKept(t *testing.T) {
 	}
 }
 
+func TestMarkdownDescribesLocalSource(t *testing.T) {
+	metadata := source.Metadata{ID: "local-123", Title: "Recording", ExtractorKey: "Local", WebpageURL: "file:///tmp/recording.wav"}
+	markdown := Markdown(metadata, whisper.Output{}, Options{})
+	for _, want := range []string{`source_platform: "local"`, `source_url: "file:///tmp/recording.wav"`, "Generated from a local media file using ffmpeg and whisper.cpp."} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("markdown missing %q", want)
+		}
+	}
+	if strings.Contains(markdown, "yt-dlp") {
+		t.Error("local transcript should not claim to use yt-dlp")
+	}
+}
+
 func segment(from int, to int, text string) whisper.Segment {
 	var value whisper.Segment
 	value.Offsets.From = from

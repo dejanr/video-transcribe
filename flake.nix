@@ -26,6 +26,7 @@
         {
           pkgs,
           config,
+          system,
           ...
         }:
         let
@@ -162,6 +163,10 @@
           scriptPackages = import ./nix/scripts { inherit pkgs; };
           cpuRuntime = mkRuntime pkgs "cpu";
           vulkanRuntime = mkRuntime pkgs "vulkan";
+          autoPackage = import ./nix/auto.nix {
+            inherit pkgs system;
+            flake = inputs.self.outPath;
+          };
 
           rocmVariantPackages = lib.optionalAttrs isLinuxX86 (
             let
@@ -256,17 +261,25 @@
         {
           formatter = pkgs.nixfmt;
 
+          checks.auto-launcher = pkgs.runCommand "video-transcribe-auto-tests" { } ''
+            ${pkgs.bash}/bin/bash ${./nix/tests/auto.sh} ${./nix/scripts/auto.sh}
+            touch "$out"
+          '';
+
           packages =
             scriptPackages
             // {
               audio-transcribe-subtitles = cpuRuntime.subtitlePackage;
               audio-transcribe-subtitles-vulkan = vulkanRuntime.subtitlePackage;
-              video-transcribe = cpuRuntime.package;
+              video-transcribe = autoPackage;
               video-transcribe-cpu = cpuRuntime.package;
-              yt-transcribe = cpuRuntime.package;
+              video-transcribe-vulkan = vulkanRuntime.package;
+              yt-transcribe = autoPackage;
               yt-transcribe-cpu = cpuRuntime.package;
-              tw-transcribe = cpuRuntime.package;
+              yt-transcribe-vulkan = vulkanRuntime.package;
+              tw-transcribe = autoPackage;
               tw-transcribe-cpu = cpuRuntime.package;
+              tw-transcribe-vulkan = vulkanRuntime.package;
               default = config.packages.video-transcribe;
             }
             // rocmVariantPackages
@@ -295,13 +308,29 @@
             };
             default = config.apps.video-transcribe;
           }
+          //
+            lib.genAttrs
+              [
+                "video-transcribe-cpu"
+                "yt-transcribe-cpu"
+                "tw-transcribe-cpu"
+                "video-transcribe-vulkan"
+                "yt-transcribe-vulkan"
+                "tw-transcribe-vulkan"
+              ]
+              (name: {
+                type = "app";
+                program = "${config.packages.${name}}/bin/${lib.removeSuffix "-cpu" (lib.removeSuffix "-vulkan" name)}";
+              })
           // rocmApps
           // cudaApps;
 
           devshells = {
             default = mkDevShell {
-              runtime = cpuRuntime;
-              acceleratorName = "Portable CPU build (use .#rocm or .#cuda for GPU shells)";
+              runtime = cpuRuntime // {
+                package = autoPackage;
+              };
+              acceleratorName = "Automatic GPU selection with CPU fallback (local build helper produces a CPU binary)";
             };
           }
           // rocmShells

@@ -21,7 +21,7 @@ func Run(argv []string) error {
 		return nil
 	}
 	if args[0] == "transcribe" {
-		return fmt.Errorf("'transcribe' subcommand was removed; use %s [flags] <url>\n\n%s", programName, usage)
+		return fmt.Errorf("'transcribe' subcommand was removed; use %s [flags] <source>\n\n%s", programName, usage)
 	}
 	return transcribeCommand(programName, args, usage)
 }
@@ -38,11 +38,13 @@ func parseInvocation(argv []string) (string, []string) {
 }
 
 func usage(programName string) string {
-	return fmt.Sprintf(`%s downloads audio from a supported video URL, transcribes it locally,
+	return fmt.Sprintf(`%s transcribes audio from a supported video URL or local media file
 and renders a markdown transcript for later summarization.
 
 Usage:
-  %s [flags] <url>
+  %s [flags] <source>
+
+Source can be a video URL, a local file path, or a file:// URL.
 
 Flags:
   -output-dir string
@@ -92,7 +94,7 @@ func transcribeCommand(programName string, args []string, usage string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("expected exactly one URL\n\n%s", usage)
+		return fmt.Errorf("expected exactly one source URL or local file\n\n%s", usage)
 	}
 
 	cfg.UseGPU = !noGPU
