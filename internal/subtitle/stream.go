@@ -4,11 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"math"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,6 +75,10 @@ func Run(ctx context.Context, config Config, controls io.Reader, output io.Write
 	if err := config.Validate(); err != nil {
 		return err
 	}
+	input, err := resolveCapture(ctx, config)
+	if err != nil {
+		return err
+	}
 	events := &emitter{encoder: json.NewEncoder(output)}
 	modelPath, detector, err := prepareModels(ctx, config, events)
 	if err != nil {
@@ -89,12 +90,8 @@ func Run(ctx context.Context, config Config, controls io.Reader, output io.Write
 		return err
 	}
 	defer stopServer()
-	source, err := outputMonitor(ctx, config.Source)
-	if err != nil {
-		return err
-	}
 	session := session{config: config, server: server, detector: detector, events: events}
-	return session.listen(ctx, source, controls)
+	return session.listen(ctx, input, controls)
 }
 
 func prepareModels(ctx context.Context, config Config, events *emitter) (string, speechDetector, error) {
@@ -114,70 +111,6 @@ func prepareModels(ctx context.Context, config Config, events *emitter) (string,
 		detector.modelPath, err = client.EnsureVADModel(ctx, modelDir)
 	}
 	return modelPath, detector, err
-}
-
-func outputMonitor(ctx context.Context, source string) (string, error) {
-	if source != "" {
-		return source, nil
-	}
-	sink, err := (shell.Runner{}).Capture(ctx, "pactl", "get-default-sink")
-	if err != nil {
-		return "", fmt.Errorf("find audio output (requires PulseAudio or PipeWire-Pulse): %w", err)
-	}
-	return strings.TrimSpace(string(sink)) + ".monitor", nil
-}
-
-func capture(ctx context.Context, config Config, source string, state *playback, clips chan clip, events *emitter) error {
-	cmd := exec.CommandContext(ctx, "ffmpeg",
-		"-nostdin", "-hide_banner", "-loglevel", "warning",
-		"-f", "pulse", "-i", source,
-		"-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1",
-	)
-	cmd.Stderr = os.Stderr
-	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("capture output audio: %w", err)
-	}
-	chunks := chunker{
-		threshold:     config.Threshold,
-		maxFrames:     int(math.Ceil(config.ChunkSeconds * 4)),
-		stepFrames:    int(math.Ceil(config.StepSeconds * 4)),
-		overlapFrames: int(math.Ceil(config.OverlapSeconds * 4)),
-	}
-	frame := make([]byte, frameBytes)
-	generation := state.generation.Load()
-	for {
-		_, readErr := io.ReadFull(pipe, frame)
-		if readErr != nil {
-			waitErr := cmd.Wait()
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf("audio capture stopped: %v (ffmpeg: %v)", readErr, waitErr)
-		}
-		current := state.generation.Load()
-		if current != generation || state.paused.Load() {
-			chunks.reset()
-			generation = current
-		}
-		if state.paused.Load() {
-			continue
-		}
-		chunk := chunks.push(frame)
-		if chunk == nil {
-			continue
-		}
-		audio := clip{
-			pcm: chunk.pcm, id: chunk.id, final: chunk.final, overlapped: chunk.overlapped,
-			started: time.Now().Add(-time.Duration(float64(len(chunk.pcm)) / (sampleRate * 2) * float64(time.Second))), queued: time.Now(), generation: generation,
-		}
-		if enqueueLatest(clips, audio) {
-			events.send(Event{Type: "status", Text: "Inference is slower than playback · skipped old audio to stay near live. Try a smaller model or GPU build."})
-		}
-	}
 }
 
 func enqueueLatest(queue chan clip, audio clip) bool {

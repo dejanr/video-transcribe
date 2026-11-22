@@ -28,6 +28,7 @@ func serverCandidates(noGPU bool) []serverCandidate {
 	for _, backend := range []struct{ name, variable string }{
 		{"ROCm", "AUDIO_SUBTITLE_WHISPER_ROCM"},
 		{"Vulkan", "AUDIO_SUBTITLE_WHISPER_VULKAN"},
+		{"Metal", "AUDIO_SUBTITLE_WHISPER_METAL"},
 	} {
 		if program := os.Getenv(backend.variable); program != "" {
 			candidates = append(candidates, serverCandidate{name: backend.name, program: program, requireGPU: true})

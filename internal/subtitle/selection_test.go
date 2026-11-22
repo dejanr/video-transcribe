@@ -19,13 +19,14 @@ func fakeServers(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"whisper-server", "gpu-server", "gpu-crash", "gpu-none", "gpu-bad-inference", "gpu-hang", "rocm-server", "rocm-crash", "rocm-none", "rocm-bad-inference", "rocm-hang"} {
+	for _, name := range []string{"whisper-server", "gpu-server", "gpu-crash", "gpu-none", "gpu-bad-inference", "gpu-hang", "metal-server", "metal-none", "rocm-server", "rocm-crash", "rocm-none", "rocm-bad-inference", "rocm-hang"} {
 		script := fmt.Sprintf("#!/bin/sh\nexec %s -test.run=TestSubtitleHelperProcess -- %s \"$@\"\n", strconv.Quote(executable), name)
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Setenv("AUDIO_SUBTITLE_WHISPER_ROCM", "")
+	t.Setenv("AUDIO_SUBTITLE_WHISPER_METAL", "")
 	t.Setenv("SUBTITLE_HELPER_PROCESS", "1")
 	t.Setenv("SUBTITLE_HELPER_DIR", dir)
 	t.Setenv("AUDIO_SUBTITLE_WHISPER_CPU", filepath.Join(dir, "whisper-server"))
@@ -124,6 +125,39 @@ func TestStartupPrefersROCmThenVulkanThenCPU(t *testing.T) {
 			if test.noGPU {
 				if _, err := os.Stat(filepath.Join(dir, test.rocm+".args")); !os.IsNotExist(err) {
 					t.Fatal("--no-gpu still started ROCm")
+				}
+			}
+		})
+	}
+}
+
+func TestStartupSelectsMetalOrFallsBackToCPU(t *testing.T) {
+	for _, test := range []struct {
+		program string
+		noGPU   bool
+		want    string
+	}{
+		{"metal-server", false, "MTL0"},
+		{"metal-none", false, "CPU"},
+		{"metal-server", true, "CPU"},
+	} {
+		t.Run(fmt.Sprintf("%s/noGPU=%t", test.program, test.noGPU), func(t *testing.T) {
+			dir := fakeServers(t)
+			t.Setenv("AUDIO_SUBTITLE_WHISPER_VULKAN", "")
+			t.Setenv("AUDIO_SUBTITLE_WHISPER_METAL", filepath.Join(dir, test.program))
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			server, stop, err := startServer(ctx, Config{Threads: 1, NoGPU: test.noGPU}, "fixture.bin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stop()
+			if server.backend != test.want {
+				t.Fatalf("selected %s, want %s", server.backend, test.want)
+			}
+			if test.noGPU {
+				if _, err := os.Stat(filepath.Join(dir, test.program+".args")); !os.IsNotExist(err) {
+					t.Fatal("--no-gpu still started Metal")
 				}
 			}
 		})

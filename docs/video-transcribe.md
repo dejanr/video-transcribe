@@ -74,13 +74,16 @@ For Twitch archived broadcasts:
 nix run .#tw-transcribe -- 'https://www.twitch.tv/videos/2097173208'
 ```
 
-The default app detects accessible GPU devices at runtime and selects CUDA for NVIDIA, ROCm for Strix Halo (`gfx1151`) and Radeon RX 9070 series (`gfx1201`), or Vulkan for other GPUs. CPU is the last fallback. Only the selected variant is built; if its Nix build fails, the launcher tries the next GPU option before CPU. It prints its selection to stderr.
+The default app selects Metal on Apple Silicon (macOS 14 or later). On Linux, it detects accessible GPU devices at runtime and selects CUDA for NVIDIA, ROCm for Strix Halo (`gfx1151`) and Radeon RX 9070 series (`gfx1201`), or Vulkan for other GPUs. CPU is the last fallback. Only the selected variant is built; if its Nix build fails, the launcher tries the next option before CPU. It prints its selection to stderr.
 
-Selection is a GPU-first heuristic, not a benchmark. GPU drivers must already be installed and device nodes accessible to your user. Vulkan also requires a working Vulkan driver. Transcription errors are returned directly, not retried as CPU runs. This is separate from the subtitle launcher's [inference-validated backend selection](subtitles.md#backend-policy).
+Selection is a GPU-first heuristic, not a benchmark. On Linux, GPU drivers must already be installed and device nodes accessible to your user. Transcription errors are returned directly, not retried as CPU runs. This is separate from the subtitle launcher's [inference-validated backend selection](subtitles.md#backend-policy).
 
 To bypass detection, use an explicit accelerator app:
 
 ```bash
+# Apple Metal build (aarch64-darwin)
+nix run .#video-transcribe-metal -- --language auto /path/to/recording.wav
+
 # AMD ROCm build for Strix Halo (gfx1151) and Radeon RX 9070 series (gfx1201)
 nix run .#video-transcribe-rocm -- 'https://www.twitch.tv/videos/2097173208'
 
@@ -140,11 +143,12 @@ video-transcribe \
   'https://www.twitch.tv/videos/2097173208'
 ```
 
-This backend uses FFmpeg 8's `whisper` filter, which can be faster on long-form inputs. When `--keep` is enabled it stores `transcript.raw.json` in the project's normal JSON shape so the rest of the pipeline stays the same. GPU acceleration is enabled by default when the selected build includes ROCm or CUDA support.
+This backend uses FFmpeg 8's `whisper` filter, which can be faster on long-form inputs. When `--keep` is enabled it stores `transcript.raw.json` in the project's normal JSON shape so the rest of the pipeline stays the same. GPU acceleration is enabled by default when the selected build includes Metal, ROCm, CUDA, or Vulkan support.
 
 ## Accelerator notes
 
 - `video-transcribe`, `yt-transcribe`, and `tw-transcribe`: automatic GPU-first selection, including in the default dev shell
+- `video-transcribe-metal`: Apple Silicon GPU build, with no additional model files for acceleration
 - `video-transcribe-cpu`: portable CPU build
 - `video-transcribe-vulkan`: Vulkan GPU build on both supported Linux architectures
 - `video-transcribe-rocm`: ROCm build for Strix Halo (`gfx1151`) and Radeon RX 9070 series (`gfx1201`)
@@ -187,13 +191,9 @@ video-transcribe [flags] <source>
 
 ## Model cache
 
-Models are downloaded on first use into:
-
-```text
-$XDG_CACHE_HOME/video-transcribe/models
-# or
-~/.cache/video-transcribe/models
-```
+Models are downloaded on first use into `~/Library/Caches/video-transcribe/models`
+on macOS, or `$XDG_CACHE_HOME/video-transcribe/models` on Linux
+(`~/.cache/video-transcribe/models` if unset).
 
 Override it with:
 

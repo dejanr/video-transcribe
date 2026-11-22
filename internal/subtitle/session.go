@@ -16,7 +16,7 @@ type session struct {
 	events   *emitter
 }
 
-func (s *session) listen(ctx context.Context, source string, controls io.Reader) error {
+func (s *session) listen(ctx context.Context, input captureInput, controls io.Reader) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go s.state.commands(controls)
@@ -24,14 +24,14 @@ func (s *session) listen(ctx context.Context, source string, controls io.Reader)
 	captureDone := make(chan struct{})
 	var captureErr error
 	go func() {
-		captureErr = capture(ctx, s.config, source, &s.state, clips, s.events)
+		captureErr = capture(ctx, s.config, input, &s.state, clips, s.events)
 		close(captureDone)
 	}()
 	defer func() {
 		cancel()
 		<-captureDone
 	}()
-	s.events.send(Event{Type: "status", Text: "Listening · " + s.config.Model + " · " + source, Runtime: s.server.backend})
+	s.events.send(Event{Type: "status", Text: "Listening · " + s.config.Model + " · " + input.label, Runtime: s.server.backend})
 	for {
 		select {
 		case <-ctx.Done():

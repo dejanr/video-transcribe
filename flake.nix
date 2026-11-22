@@ -20,6 +20,7 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
+        "aarch64-darwin"
       ];
 
       perSystem =
@@ -31,7 +32,9 @@
         }:
         let
           lib = pkgs.lib;
-          isLinuxX86 = pkgs.stdenv.hostPlatform.isLinux && pkgs.stdenv.hostPlatform.isx86_64;
+          inherit (pkgs.stdenv.hostPlatform) isLinux isDarwin;
+          isLinuxX86 = isLinux && pkgs.stdenv.hostPlatform.isx86_64;
+          macCapture = if isDarwin then pkgs.callPackage ./nix/mac-capture.nix { } else null;
           pkgsCuda =
             if isLinuxX86 then
               import inputs.nixpkgs {
@@ -49,6 +52,8 @@
                   cudaSupport = accelerator == "cuda";
                   rocmSupport = accelerator == "rocm";
                   vulkanSupport = accelerator == "vulkan";
+                  metalSupport = accelerator == "metal";
+                  coreMLSupport = false;
                   withSDL = false;
                 }
                 // packageSet.lib.optionalAttrs (accelerator == "rocm") {
@@ -56,16 +61,20 @@
                 }
               );
             in
-            if accelerator != "rocm" then
-              package
-            else
+            if accelerator == "cpu" && isDarwin then
+              package.overrideAttrs (old: {
+                cmakeFlags = old.cmakeFlags ++ [ "-DGGML_METAL=OFF" ];
+              })
+            else if accelerator == "rocm" then
               package.overrideAttrs (old: {
                 cmakeFlags =
                   (builtins.filter (flag: !(packageSet.lib.hasInfix "GGML_HIPBLAS" flag)) old.cmakeFlags)
                   ++ [
                     "-DGGML_HIP=ON"
                   ];
-              });
+              })
+            else
+              package;
 
           mkRuntime =
             packageSet: accelerator:
@@ -79,7 +88,10 @@
                 ffmpeg = packageSet.ffmpeg;
                 whisper-cpp = whisperPackage;
                 subtitleWhisperCPU = mkWhisperCpp packageSet "cpu";
-                subtitleWhisperVulkan = if accelerator != "cuda" then mkWhisperCpp packageSet "vulkan" else null;
+                subtitleWhisperVulkan =
+                  if isLinux && accelerator != "cuda" then mkWhisperCpp packageSet "vulkan" else null;
+                subtitleWhisperMetal = if accelerator == "metal" then whisperPackage else null;
+                inherit macCapture;
                 subtitleWhisperROCm =
                   if
                     isLinuxX86
@@ -120,19 +132,23 @@
                   build           — Build the local CLI binary
                   ci              — Run the local CI task set
 
-                {202}▶ app{reset}
+                {202}▶ video transcripts{reset}
 
-                  video-transcribe
-                  yt-transcribe
-                  tw-transcribe
-                  audio-transcribe-subtitles
+                  video-transcribe  — Transcribe a video URL or local file to Markdown
+                  yt-transcribe / tw-transcribe  — Aliases
+
+                {202}▶ live subtitles{reset}
+
+                  audio-transcribe-subtitles         — German → English overlay
+                  audio-transcribe-subtitles --demo  — Preview without audio or models
+                  Choose System audio or Microphone in the toolbar.
 
                 {202}▶ accelerator{reset}
 
                   ${acceleratorName}
               '';
 
-              devshell.startup.project-env.text = ''
+              devshell.startup.project-env.text = lib.optionalString isLinux ''
                 export VIDEO_TRANSCRIBE_MODEL_DIR="''${VIDEO_TRANSCRIBE_MODEL_DIR:-''${YT_TRANSCRIBE_MODEL_DIR:-$HOME/.cache/video-transcribe/models}}"
                 export YT_TRANSCRIBE_MODEL_DIR="$VIDEO_TRANSCRIBE_MODEL_DIR"
               '';
@@ -157,12 +173,23 @@
                 gnugrep
                 config.formatter
               ])
+              ++ lib.optional isDarwin macCapture
               ++ extraPackages;
             };
 
           scriptPackages = import ./nix/scripts { inherit pkgs; };
           cpuRuntime = mkRuntime pkgs "cpu";
-          vulkanRuntime = mkRuntime pkgs "vulkan";
+          platformAccelerator = if isDarwin then "metal" else "vulkan";
+          acceleratorRuntime = mkRuntime pkgs platformAccelerator;
+          defaultRuntime = if isDarwin then acceleratorRuntime else cpuRuntime;
+          cliNames = [
+            "video-transcribe"
+            "yt-transcribe"
+            "tw-transcribe"
+          ];
+          platformVariantNames = map (name: "${name}-${platformAccelerator}") (
+            cliNames ++ [ "audio-transcribe-subtitles" ]
+          );
           autoPackage = import ./nix/auto.nix {
             inherit pkgs system;
             flake = inputs.self.outPath;
@@ -269,27 +296,23 @@
           packages =
             scriptPackages
             // {
-              audio-transcribe-subtitles = cpuRuntime.subtitlePackage;
-              audio-transcribe-subtitles-vulkan = vulkanRuntime.subtitlePackage;
+              audio-transcribe-subtitles = defaultRuntime.subtitlePackage;
+              "audio-transcribe-subtitles-${platformAccelerator}" = acceleratorRuntime.subtitlePackage;
               video-transcribe = autoPackage;
               video-transcribe-cpu = cpuRuntime.package;
-              video-transcribe-vulkan = vulkanRuntime.package;
               yt-transcribe = autoPackage;
               yt-transcribe-cpu = cpuRuntime.package;
-              yt-transcribe-vulkan = vulkanRuntime.package;
               tw-transcribe = autoPackage;
               tw-transcribe-cpu = cpuRuntime.package;
-              tw-transcribe-vulkan = vulkanRuntime.package;
               default = config.packages.video-transcribe;
             }
+            // lib.genAttrs (map (name: "${name}-${platformAccelerator}") cliNames) (
+              _: acceleratorRuntime.package
+            )
             // rocmVariantPackages
             // cudaVariantPackages;
 
           apps = {
-            audio-transcribe-subtitles-vulkan = {
-              type = "app";
-              program = "${config.packages.audio-transcribe-subtitles-vulkan}/bin/audio-transcribe-subtitles";
-            };
             audio-transcribe-subtitles = {
               type = "app";
               program = "${config.packages.audio-transcribe-subtitles}/bin/audio-transcribe-subtitles";
@@ -308,29 +331,20 @@
             };
             default = config.apps.video-transcribe;
           }
-          //
-            lib.genAttrs
-              [
-                "video-transcribe-cpu"
-                "yt-transcribe-cpu"
-                "tw-transcribe-cpu"
-                "video-transcribe-vulkan"
-                "yt-transcribe-vulkan"
-                "tw-transcribe-vulkan"
-              ]
-              (name: {
-                type = "app";
-                program = "${config.packages.${name}}/bin/${lib.removeSuffix "-cpu" (lib.removeSuffix "-vulkan" name)}";
-              })
+          // lib.genAttrs (map (name: "${name}-cpu") cliNames ++ platformVariantNames) (name: {
+            type = "app";
+            program = "${config.packages.${name}}/bin/${lib.removeSuffix "-cpu" (lib.removeSuffix "-${platformAccelerator}" name)}";
+          })
           // rocmApps
           // cudaApps;
 
           devshells = {
             default = mkDevShell {
-              runtime = cpuRuntime // {
+              runtime = defaultRuntime // {
                 package = autoPackage;
               };
-              acceleratorName = "Automatic GPU selection with CPU fallback (local build helper produces a CPU binary)";
+              acceleratorName =
+                if isDarwin then "Apple Metal with CPU fallback" else "Automatic GPU selection with CPU fallback";
             };
           }
           // rocmShells

@@ -1,6 +1,6 @@
 # Live translated subtitles
 
-`audio-transcribe-subtitles` captures desktop audio and translates German speech
+`audio-transcribe-subtitles` captures desktop audio or microphone input and translates German speech
 into English in a transparent, always-on-top overlay. Start it with the command
 in [README](../README.md#start).
 
@@ -12,10 +12,15 @@ nix run .#audio-transcribe-subtitles -- --help    # Available options
 
 ## Requirements and privacy
 
-Linux with PulseAudio or PipeWire-Pulse is required. On X11, transparency needs a
-compositor such as Picom. Window-manager rules determine always-on-top placement;
-use windowed/borderless playback if fullscreen video covers the overlay. Wayland
-transparency and placement are compositor-dependent.
+- **Apple Silicon, macOS 14 or later:** ScreenCaptureKit captures system audio
+  without a virtual audio device. Allow the terminal you launch from under
+  **System Settings → Privacy & Security → Screen & System Audio Recording** and
+  relaunch it if macOS asks. The app consumes only audio, not screen frames.
+- **Linux:** Use PulseAudio or PipeWire-Pulse. X11 transparency requires a
+  compositor such as Picom. Wayland transparency and placement are
+  compositor-dependent.
+
+If fullscreen video covers the overlay, use windowed or borderless playback.
 
 The first run downloads Whisper `small` (~466 MB) and Silero VAD (~865 KB) into
 the shared [model cache](video-transcribe.md#model-cache). Silero is pinned to an
@@ -25,8 +30,8 @@ settings persist. Terminal diagnostics may contain transcribed text.
 
 ## Controls
 
-The top bar contains Pause/Resume, Live, Clear, font Size, Background opacity,
-and close. Drag the title to move; drag the bottom-right grip to resize.
+The top bar contains the audio input dropdown, Pause/Resume, Live, Clear, font
+Size, Background opacity, and close. Drag the title to move; drag the bottom-right grip to resize.
 
 - **Pause** discards incoming audio; Resume starts from live audio.
 - Scroll back to review history; **Live** returns to new captions.
@@ -39,24 +44,47 @@ remembered between runs.
 
 ## Backend policy
 
-The normal launcher tries **ROCm → Vulkan → CPU**. ROCm is bundled on
-`x86_64-linux` for AMD `gfx1151` / `gfx1201`, including the RX 9070 series.
-On `aarch64-linux`, startup tries Vulkan → CPU. Vulkan supports compatible AMD,
-NVIDIA, and Intel GPUs. Bundling ROCm adds AMD runtime dependencies.
+On Apple Silicon, the normal launcher tries **Metal → CPU**. On Linux, it tries
+**ROCm → Vulkan → CPU**. ROCm is bundled on `x86_64-linux` for AMD
+`gfx1151` / `gfx1201`, including the RX 9070 series, and adds AMD runtime
+dependencies. On `aarch64-linux`, startup tries Vulkan → CPU.
 
 Each GPU attempt loads the model, verifies an actual GPU selection, and runs
 synthetic inference. Failure advances to the next backend; each attempt has a
 30-second startup/validation limit. `--no-gpu` goes directly to CPU. This is a
 fixed preference order, not a performance benchmark.
 
-The status reports the selected runtime, such as `ROCm0`, `Vulkan0`, or `CPU`.
+The status reports the selected runtime, such as `MTL0`, `ROCm0`, `Vulkan0`, or `CPU`.
 Silero always runs on CPU. Accelerator-specific app names remain available for
 explicit configurations; normal startup needs no suffix.
 
 ## Audio selection
 
-The default source is the current output monitor, not the microphone. All apps
-playing through that output are captured.
+Choose **System audio** or **Microphone** in the overlay's input dropdown.
+Changing input restarts capture and inference; completed captions stay visible.
+The app starts on system audio unless you pass `--mic` or `--source`. An explicit
+`--source` is also available as **Custom source** in the dropdown.
+
+### Microphone
+
+**Microphone** uses your system's default input instead of desktop audio. On macOS,
+choose the device in **System Settings → Sound → Input** before launching.
+Microphone and screen recording are separate permissions. If capture doesn't
+start and no prompt appears, check **System Settings → Privacy & Security →
+Microphone** for your terminal app. If you launched from an editor, try
+**Terminal.app**. Restart the launcher after changing permission or audio input.
+
+On Linux, `--mic` uses the default PulseAudio/PipeWire-Pulse input. Use
+`--source` instead to select a specific PulseAudio source.
+
+### Desktop audio
+
+On macOS, the default captures system audio via the first available display, not
+the microphone. Run `--list-sources` to check permission and list display IDs.
+Optionally pass `--source DISPLAY_ID`; this selects a display, not an audio device.
+
+On Linux, the default source is the current output monitor, not the microphone.
+All apps playing through that output are captured.
 
 ```bash
 nix run .#audio-transcribe-subtitles -- --list-sources
@@ -104,7 +132,7 @@ is skipped, the last preview is retained when the next phrase arrives.
 
 | Symptom | Check |
 | --- | --- |
-| No captions | Audio must play through the selected monitor; restart after output-device changes. |
+| No captions | For microphone capture, check the default input and microphone permission. For desktop audio on macOS, check recording permission with `--list-sources`. On Linux, play audio through the selected monitor. |
 | Quiet speech missed | Lower the energy/VAD thresholds, accepting more false positives. |
 | Unexpected CPU fallback | Inspect terminal diagnostics for driver, device-permission, or inference failures. |
 | Skipped/delayed captions | Check the runtime; try a smaller model or longer preview interval. |
@@ -124,13 +152,18 @@ Pause/resume generations invalidate queued and in-flight captions. Deduplication
 applies only to adjacent overlapping windows in the same generation.
 
 Each failed startup attempt must stop before the next backend starts. Capture
-and inference processes must terminate when the overlay closes. Exercise audio
-checks through an isolated PulseAudio null sink with synthetic audio: nonexistent
+and inference processes must terminate when the overlay closes. On Linux, exercise
+audio checks through an isolated PulseAudio null sink with synthetic audio: nonexistent
 source names may be redirected to a real output and are not reliable isolation.
+On macOS, the helper in `native/macos/capture.m` emits 16 kHz mono signed 16-bit
+PCM to the same capture loop. Test it from a logged-in desktop session using
+synthetic playback.
 
 Packaged executable paths come from `AUDIO_SUBTITLE_WHISPER_ROCM`,
-`AUDIO_SUBTITLE_WHISPER_VULKAN`, `AUDIO_SUBTITLE_WHISPER_CPU`, and
-`AUDIO_SUBTITLE_VAD`. Local backend builds without them use tools on `PATH`.
+`AUDIO_SUBTITLE_WHISPER_VULKAN`, `AUDIO_SUBTITLE_WHISPER_METAL`,
+`AUDIO_SUBTITLE_WHISPER_CPU`, and `AUDIO_SUBTITLE_VAD`. Local backend builds
+without them use tools on `PATH`. On macOS, put `audio-subtitle-mac-capture` on
+`PATH` too; it is included in the dev shell.
 
 ```bash
 # With PySide6 and Whisper tools available, use a locally built backend

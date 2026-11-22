@@ -10,6 +10,7 @@ from PySide6.QtCore import QProcess, QSettings, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -52,12 +53,14 @@ class DragHandle(QLabel):
 
 
 class SubtitleOverlay(QWidget):
-    def __init__(self, backend, backend_args, demo=False, settings=None):
+    def __init__(self, backend, backend_args, demo=False, settings=None, *, mic=False, source=""):
         super().__init__()
         self.settings = settings if settings is not None else subtitle_settings()
         self.demo = demo
+        self.backend_args = backend_args
         self.paused = False
         self.closing = False
+        self.switching_input = False
         self.updating = False
         self.pending = bytearray()
         self.diagnostics = ""
@@ -76,7 +79,7 @@ class SubtitleOverlay(QWidget):
             QWidget { color: #e2e8f0; }
             QLabel { background: transparent; }
             QFrame#toolbar { background: rgba(15, 23, 35, 225); border-radius: 10px; }
-            QLabel#controlLabel, QFrame#toolbar QPushButton, QFrame#toolbar QSpinBox {
+            QLabel#controlLabel, QFrame#toolbar QPushButton, QFrame#toolbar QSpinBox, QComboBox {
                 font-size: 12px;
             }
             QLabel#title { color: #f1f5f9; font-size: 14px; font-weight: 600; }
@@ -96,9 +99,10 @@ class SubtitleOverlay(QWidget):
             QPushButton#close:hover { background: rgba(239, 68, 68, 40); color: #fecaca; }
             QPlainTextEdit { background: transparent; border: none; color: #f1f5f9;
                              padding: 6px; selection-background-color: #115e59; }
-            QSpinBox { background: rgba(51, 65, 85, 100); border: 1px solid rgba(148, 163, 184, 40);
-                       border-radius: 6px; padding: 5px; }
-            QSpinBox:focus { border-color: #5eead4; }
+            QSpinBox, QComboBox { background: rgba(51, 65, 85, 100); border: 1px solid rgba(148, 163, 184, 40);
+                                  border-radius: 6px; padding: 5px; }
+            QSpinBox:focus, QComboBox:focus { border-color: #5eead4; }
+            QComboBox QAbstractItemView { background: #1e293b; selection-background-color: #115e59; }
             QSlider::groove:horizontal { height: 4px; background: #334155; border-radius: 2px; }
             QSlider::sub-page:horizontal { background: #5d9792; border-radius: 2px; }
             QSlider::handle:horizontal { background: #cbd5e1; border-radius: 5px;
@@ -131,6 +135,19 @@ class SubtitleOverlay(QWidget):
         title_group.addWidget(self.status)
         toolbar.addLayout(title_group, 1)
         toolbar.addSpacing(12)
+
+        self.input_choice = QComboBox()
+        self.input_choice.setAccessibleName("Audio input")
+        self.input_choice.setToolTip("Audio input · choose system audio or the default microphone")
+        self.input_choice.addItem("System audio", [])
+        self.input_choice.addItem("Microphone", ["--mic"])
+        if source:
+            self.input_choice.addItem("Custom source", ["--source", source])
+            self.input_choice.setCurrentIndex(2)
+        elif mic:
+            self.input_choice.setCurrentIndex(1)
+        self.input_choice.setEnabled(not demo)
+        toolbar.addWidget(self.input_choice)
 
         self.pause_button = QPushButton("Pause")
         self.pause_button.setObjectName("pause")
@@ -222,11 +239,15 @@ class SubtitleOverlay(QWidget):
 
         self.process = QProcess(self)
         self.process.setProgram(backend)
-        self.process.setArguments(backend_args)
+        self.process.started.connect(self.backend_started)
         self.process.readyReadStandardOutput.connect(self.read_events)
         self.process.readyReadStandardError.connect(self.read_diagnostics)
         self.process.errorOccurred.connect(self.process_error)
         self.process.finished.connect(self.process_finished)
+        self.stop_timer = QTimer(self)
+        self.stop_timer.setSingleShot(True)
+        self.stop_timer.timeout.connect(self.process.kill)
+        self.input_choice.currentIndexChanged.connect(self.change_input)
         self.demo_timer = QTimer(self)
         self.demo_timer.timeout.connect(self.demo_caption)
         self.demo_index = 0
@@ -234,7 +255,35 @@ class SubtitleOverlay(QWidget):
             self.set_status("Demo mode", "No audio capture or model required.")
             self.demo_timer.start(1800)
         else:
-            self.process.start()
+            self.start_backend()
+
+    def start_backend(self):
+        self.stop_timer.stop()
+        self.switching_input = False
+        self.pending.clear()
+        self.runtime = ""
+        self.set_status("Paused" if self.paused else "Starting local translation…")
+        self.process.setArguments(self.backend_args + self.input_choice.currentData())
+        self.process.start()
+
+    def backend_started(self):
+        if self.switching_input:
+            self.process.terminate()
+        elif self.paused:
+            self.process.write(b"pause\n")
+
+    def change_input(self):
+        if self.demo or self.closing or self.switching_input:
+            return
+        self.clear_preview()
+        if self.process.state() == QProcess.ProcessState.NotRunning:
+            self.start_backend()
+            return
+        self.switching_input = True
+        self.set_status("Switching audio input…")
+        self.stop_timer.start(10000)
+        if self.process.state() == QProcess.ProcessState.Running:
+            self.process.terminate()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -281,6 +330,8 @@ class SubtitleOverlay(QWidget):
         if paused:
             self.clear_preview()
         self.pause_button.setText("Resume" if paused else "Pause")
+        if self.switching_input:
+            return
         if self.process.state() == QProcess.ProcessState.Running:
             self.process.write(b"pause\n" if paused else b"resume\n")
         self.set_status("Paused" if paused else "Listening", "Incoming audio is discarded while paused." if paused else None)
@@ -316,7 +367,10 @@ class SubtitleOverlay(QWidget):
                 self.append_subtitle(event["text"])
 
     def read_events(self):
-        self.pending.extend(bytes(self.process.readAllStandardOutput()))
+        data = self.process.readAllStandardOutput()
+        if self.switching_input or self.closing:
+            return
+        self.pending.extend(bytes(data))
         while b"\n" in self.pending:
             line, _, remainder = self.pending.partition(b"\n")
             self.pending = bytearray(remainder)
@@ -358,14 +412,25 @@ class SubtitleOverlay(QWidget):
         sys.stderr.write(data)
 
     def process_error(self, error):
-        if not self.closing:
+        if self.closing:
+            return
+        if self.switching_input:
+            if error == QProcess.ProcessError.FailedToStart:
+                QTimer.singleShot(0, self, self.restart_after_switch)
+        else:
             self.set_status("Backend error · " + self.process.errorString())
 
     def process_finished(self, exit_code, exit_status):
         self.read_events()
         self.read_diagnostics()
-        if not self.closing and not self.status.text().startswith("Error"):
+        if self.switching_input:
+            QTimer.singleShot(0, self, self.restart_after_switch)
+        elif not self.closing and not self.status.text().startswith("Error"):
             self.set_status(f"Translation stopped (exit {exit_code}). See terminal for details.")
+
+    def restart_after_switch(self):
+        if self.switching_input and not self.closing:
+            self.start_backend()
 
     def demo_caption(self):
         if self.paused:
@@ -380,6 +445,7 @@ class SubtitleOverlay(QWidget):
 
     def closeEvent(self, event):
         self.closing = True
+        self.stop_timer.stop()
         self.demo_timer.stop()
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("font_size", self.font_size.value())
@@ -393,9 +459,11 @@ class SubtitleOverlay(QWidget):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="audio-transcribe-subtitles", description="Local German → English system-audio subtitles.")
+    parser = argparse.ArgumentParser(prog="audio-transcribe-subtitles", description="Local German → English subtitles for system audio or microphone input.")
     parser.add_argument("--model", default="small", help="Multilingual Whisper model; default: small")
-    parser.add_argument("--source", default="", help="PulseAudio output monitor; default: current output")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--source", default="", help="PulseAudio source (Linux) or display ID (macOS); default: system audio")
+    inputs.add_argument("--mic", action="store_true", help="Use the default microphone instead of system audio")
     parser.add_argument("--chunk-seconds", type=float, default=6, help="Maximum audio context window")
     parser.add_argument("--step-seconds", type=float, default=1.5, help="Preview interval; 0 disables previews")
     parser.add_argument("--overlap-seconds", type=float, default=0.75, help="Overlap across windows, 0–1 seconds")
@@ -411,12 +479,13 @@ def main():
     parser.add_argument("--backend", default=os.environ.get("AUDIO_SUBTITLE_BACKEND", "audio-subtitle-stream"))
     args = parser.parse_args()
     if args.list_sources:
+        if args.mic:
+            parser.error("--mic uses the default input from system sound settings")
         return subprocess.call([args.backend, "--list-sources"])
     if not args.demo and not shutil.which(args.backend):
         parser.error("audio-subtitle-stream not found; use the Nix app or pass --backend /path/to/binary")
     backend_args = [
         "--model", args.model,
-        "--source", args.source,
         "--chunk-seconds", str(args.chunk_seconds),
         "--step-seconds", str(args.step_seconds),
         "--overlap-seconds", str(args.overlap_seconds),
@@ -433,7 +502,7 @@ def main():
         backend_args.append("--no-gpu")
     app = QApplication([sys.argv[0], "-style", "Fusion"])
     app.setApplicationName("audio-transcribe-subtitles")
-    overlay = SubtitleOverlay(args.backend, backend_args, args.demo)
+    overlay = SubtitleOverlay(args.backend, backend_args, args.demo, mic=args.mic, source=args.source)
     overlay.show()
     signal.signal(signal.SIGINT, lambda *_: overlay.close())
     signal.signal(signal.SIGTERM, lambda *_: overlay.close())

@@ -8,6 +8,9 @@
   subtitleWhisperCPU ? null,
   subtitleWhisperVulkan ? null,
   subtitleWhisperROCm ? null,
+  subtitleWhisperMetal ? null,
+  macCapture ? null,
+  stdenv,
   coreutils,
   gnugrep,
   pulseaudio,
@@ -26,6 +29,11 @@ let
       "--set"
       "AUDIO_SUBTITLE_WHISPER_ROCM"
       "${subtitleWhisperROCm}/bin/whisper-server"
+    ]
+    ++ lib.optionals (subtitleWhisperMetal != null) [
+      "--set"
+      "AUDIO_SUBTITLE_WHISPER_METAL"
+      "${subtitleWhisperMetal}/bin/whisper-server"
     ]
     ++ lib.optionals (subtitleWhisperVulkan != null) [
       "--set"
@@ -53,14 +61,17 @@ buildGoModule {
     for program in video-transcribe yt-transcribe tw-transcribe audio-subtitle-stream; do
       wrapProgram $out/bin/$program \
         --set PATH ${
-          lib.makeBinPath [
-            yt-dlp
-            ffmpeg
-            whisper-cpp
-            coreutils
-            gnugrep
-            pulseaudio
-          ]
+          lib.makeBinPath (
+            [
+              yt-dlp
+              ffmpeg
+              whisper-cpp
+              coreutils
+              gnugrep
+            ]
+            ++ lib.optional stdenv.hostPlatform.isLinux pulseaudio
+            ++ lib.optional (macCapture != null) macCapture
+          )
         } \
         ${lib.escapeShellArgs subtitleRuntimeArgs}
     done

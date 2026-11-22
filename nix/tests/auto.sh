@@ -33,6 +33,7 @@ assert_equal $'vulkan\ncpu' "$(detect_accelerators x86_64-linux "$sysfs" "$devic
 printf '0x1586\n' > "$sysfs/class/drm/renderD128/device/device"
 touch "$devices/nvidiactl" "$devices/nvidia0"
 assert_equal $'cuda\nrocm\nvulkan\ncpu' "$(detect_accelerators x86_64-linux "$sysfs" "$devices")"
+assert_equal $'metal\ncpu' "$(detect_accelerators aarch64-darwin "$sysfs" "$devices")"
 rm "$devices/dri/renderD128"
 assert_equal $'cuda\ncpu' "$(detect_accelerators x86_64-linux "$sysfs" "$devices")"
 rm "$devices/nvidia0"

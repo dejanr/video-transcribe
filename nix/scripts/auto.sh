@@ -2,6 +2,11 @@ detect_accelerators() {
   local system="$1" sysfs="$2" devices="$3"
   local render vendor device driver has_rocm=false has_vulkan=false
 
+  if [[ "$system" == aarch64-darwin ]]; then
+    printf '%s\n' metal cpu
+    return
+  fi
+
   if [[ "$system" == x86_64-linux && -r "$devices/nvidiactl" && -w "$devices/nvidiactl" ]]; then
     for device in "$devices"/nvidia[0-9]*; do
       if [[ -r "$device" && -w "$device" ]]; then

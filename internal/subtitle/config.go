@@ -8,6 +8,7 @@ import (
 type Config struct {
 	Model          string
 	Source         string
+	Mic            bool
 	ChunkSeconds   float64
 	StepSeconds    float64
 	OverlapSeconds float64
@@ -21,6 +22,9 @@ type Config struct {
 }
 
 func (c Config) Validate() error {
+	if c.Mic && c.Source != "" {
+		return fmt.Errorf("--mic uses the default input and cannot be combined with --source")
+	}
 	if c.Model == "" || strings.ContainsAny(c.Model, `/\`) || strings.Contains(c.Model, "..") {
 		return fmt.Errorf("model must be a whisper.cpp model name, not a path")
 	}

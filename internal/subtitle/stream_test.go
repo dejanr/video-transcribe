@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,6 +23,12 @@ func TestConfigValidation(t *testing.T) {
 	valid := Config{Model: "small", ChunkSeconds: 6, Threshold: 0.008, VADThreshold: 0.5, Threads: 4}
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	conflict := valid
+	conflict.Mic = true
+	conflict.Source = "input"
+	if conflict.Validate() == nil {
+		t.Fatal("accepted --mic with --source")
 	}
 	for _, model := range []string{"small.en", "large-v3-turbo", "../model", "", "foo/bar"} {
 		config := valid
@@ -106,17 +114,22 @@ func TestPauseCommandsInvalidatePendingCaptions(t *testing.T) {
 }
 
 func TestRunWithLocalProcesses(t *testing.T) {
-	testRunWithLocalProcesses(t, true)
+	testRunWithLocalProcesses(t, true, false)
 }
 
 func TestRunSkipsWhisperForNonSpeech(t *testing.T) {
-	testRunWithLocalProcesses(t, false)
+	testRunWithLocalProcesses(t, false, false)
 }
 
-func testRunWithLocalProcesses(t *testing.T, speech bool) {
+func TestRunWithDefaultMicrophone(t *testing.T) {
+	testRunWithLocalProcesses(t, true, true)
+}
+
+func testRunWithLocalProcesses(t *testing.T, speech, mic bool) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("AUDIO_SUBTITLE_WHISPER_ROCM", "")
+	t.Setenv("AUDIO_SUBTITLE_WHISPER_METAL", "")
 	t.Setenv("AUDIO_SUBTITLE_WHISPER_CPU", "")
 	t.Setenv("AUDIO_SUBTITLE_WHISPER_VULKAN", "")
 	t.Setenv("AUDIO_SUBTITLE_VAD", "")
@@ -128,7 +141,7 @@ func testRunWithLocalProcesses(t *testing.T, speech bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"whisper-server", "whisper-vad-speech-segments", "ffmpeg", "pactl"} {
+	for _, name := range []string{"whisper-server", "whisper-vad-speech-segments", "ffmpeg", "pactl", macCaptureProgram} {
 		script := fmt.Sprintf("#!/bin/sh\nexec %s -test.run=TestSubtitleHelperProcess -- %s \"$@\"\n", strconv.Quote(executable), name)
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
 			t.Fatal(err)
@@ -143,7 +156,7 @@ func testRunWithLocalProcesses(t *testing.T, speech bool) {
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		err := Run(ctx, Config{Model: "small", ChunkSeconds: 2, StepSeconds: 1, Threshold: 0.008, VADThreshold: 0.5, VADModelPath: filepath.Join(dir, "ggml-small.bin"), Threads: 1}, strings.NewReader(""), writer)
+		err := Run(ctx, Config{Model: "small", Mic: mic, ChunkSeconds: 2, StepSeconds: 1, Threshold: 0.008, VADThreshold: 0.5, VADModelPath: filepath.Join(dir, "ggml-small.bin"), Threads: 1}, strings.NewReader(""), writer)
 		writer.Close()
 		done <- err
 	}()
@@ -182,9 +195,31 @@ func testRunWithLocalProcesses(t *testing.T, speech bool) {
 	if !found {
 		t.Fatal("no completed window arrived from capture → VAD → NDJSON")
 	}
+	if mic {
+		testMicrophoneCaptureArgs(t, dir)
+	}
 	_, inferenceErr := os.Stat(filepath.Join(dir, "inference-called"))
 	if speech != (inferenceErr == nil) {
 		t.Fatalf("Whisper inference ran despite speech=%t (stat: %v)", speech, inferenceErr)
+	}
+}
+
+func testMicrophoneCaptureArgs(t *testing.T, dir string) {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(dir, "ffmpeg.args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	format, source := "pulse", "test-mic"
+	if runtime.GOOS == "darwin" {
+		format, source = "avfoundation", "none:default"
+	}
+	args := strings.Fields(string(body))
+	index := slices.Index(args, "-f")
+	if index == -1 || !slices.Equal(args[index:], []string{
+		"-f", format, "-i", source, "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1",
+	}) {
+		t.Fatalf("unexpected microphone capture arguments: %q", args)
 	}
 }
 
@@ -199,8 +234,17 @@ func TestSubtitleHelperProcess(t *testing.T) {
 	args = args[1:]
 	switch args[0] {
 	case "pactl":
-		fmt.Println("test-output")
-	case "ffmpeg":
+		if args[1] == "get-default-source" {
+			fmt.Println("test-mic")
+		} else {
+			fmt.Println("test-output")
+		}
+	case "ffmpeg", macCaptureProgram:
+		if args[0] == "ffmpeg" {
+			if err := os.WriteFile(filepath.Join(os.Getenv("SUBTITLE_HELPER_DIR"), "ffmpeg.args"), []byte(strings.Join(args[1:], " ")), 0o600); err != nil {
+				os.Exit(2)
+			}
+		}
 		for range 4 {
 			os.Stdout.Write(audioFrame(1000))
 		}
@@ -233,7 +277,7 @@ func TestSubtitleHelperProcess(t *testing.T) {
 		fmt.Printf("Detected %d speech segments:\n", count)
 		_ = os.WriteFile(filepath.Join(os.Getenv("SUBTITLE_HELPER_DIR"), "vad-called"), nil, 0o600)
 	case "whisper-server", "gpu-server", "gpu-crash", "gpu-none", "gpu-bad-inference", "gpu-hang",
-		"rocm-server", "rocm-crash", "rocm-none", "rocm-bad-inference", "rocm-hang":
+		"rocm-server", "rocm-crash", "rocm-none", "rocm-bad-inference", "rocm-hang", "metal-server", "metal-none":
 		_ = os.WriteFile(filepath.Join(os.Getenv("SUBTITLE_HELPER_DIR"), args[0]+".args"), []byte(strings.Join(args[1:], " ")), 0o600)
 		if strings.HasSuffix(args[0], "-crash") {
 			os.Exit(2)
@@ -242,6 +286,8 @@ func TestSubtitleHelperProcess(t *testing.T) {
 			device := "Vulkan0"
 			if strings.HasPrefix(args[0], "rocm-") {
 				device = "ROCm0"
+			} else if strings.HasPrefix(args[0], "metal-") {
+				device = "MTL0"
 			}
 			fmt.Fprintf(os.Stderr, "whisper_backend_init_gpu: using %s backend\n", device)
 		}

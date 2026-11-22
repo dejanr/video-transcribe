@@ -11,7 +11,7 @@ let
       pkgs.coreutils
     ];
     text = builtins.readFile ./scripts/auto.sh + ''
-      run_auto ${pkgs.lib.escapeShellArg (toString flake)} ${pkgs.lib.escapeShellArg system} "$(basename "$0")" "$@"
+      run_auto ${pkgs.lib.escapeShellArg "path:${flake}"} ${pkgs.lib.escapeShellArg system} "$(basename "$0")" "$@"
     '';
   };
 in

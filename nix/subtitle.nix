@@ -47,7 +47,7 @@ stdenvNoCC.mkDerivation {
   meta = {
     description = "Transparent local German-to-English system-audio subtitle overlay";
     license = lib.licenses.gpl3Plus;
-    platforms = lib.platforms.linux;
+    platforms = lib.platforms.linux ++ [ "aarch64-darwin" ];
     mainProgram = "audio-transcribe-subtitles";
   };
 }

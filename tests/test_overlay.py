@@ -33,6 +33,7 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual(self.window.title.text(), "Audio transcribe subtitles")
         self.assertEqual(self.window.windowTitle(), "Audio transcribe subtitles")
         controls = [
+            self.window.input_choice,
             self.window.pause_button,
             self.window.follow_button,
             self.window.clear_button,
@@ -190,6 +191,66 @@ class OverlayTests(unittest.TestCase):
         self.window.close()
         self.assertEqual(int(self.settings.value("font_size")), 36)
         self.assertEqual(int(self.settings.value("background")), 20)
+
+    def test_input_switch_restarts_capture_and_preserves_pause_and_history(self):
+        helper = Path(self.temp.name) / "input_backend.py"
+        stopped = Path(self.temp.name) / "system-stopped"
+        helper.write_text(
+            "import json, pathlib, signal, sys, time\n"
+            "def emit(kind, text):\n"
+            "    print(json.dumps({'type': kind, 'id': 1, 'text': text}), flush=True)\n"
+            "def stop_system(*_):\n"
+            "    emit('subtitle', 'Stale caption')\n"
+            "    time.sleep(0.05)\n"
+            "    pathlib.Path(sys.argv[1]).touch()\n"
+            "    sys.exit(0)\n"
+            "if '--mic' in sys.argv:\n"
+            "    assert pathlib.Path(sys.argv[1]).exists(), 'system backend still running'\n"
+            "    assert sys.stdin.readline() == 'pause\\n'\n"
+            "    print('microphone paused', file=sys.stderr, flush=True)\n"
+            "    signal.signal(signal.SIGTERM, stop_system)\n"
+            "else:\n"
+            "    signal.signal(signal.SIGTERM, stop_system)\n"
+            "    emit('subtitle', 'System caption')\n"
+            "    emit('partial', 'Old preview')\n"
+            "time.sleep(30)\n"
+        )
+        self.window.close()
+        self.window = SubtitleOverlay(sys.executable, [str(helper), str(stopped)], settings=self.settings)
+        self.window.show()
+        self.assertTrue(self.wait_until(lambda: self.window.preview.text() == "Old preview"))
+        self.assertEqual(self.window.input_choice.currentText(), "System audio")
+
+        self.window.input_choice.setCurrentIndex(1)
+        self.assertFalse(self.window.preview.text())
+        self.window.pause_button.setChecked(True)
+        self.assertTrue(self.wait_until(lambda: "microphone paused" in self.window.diagnostics))
+        self.assertEqual(self.window.input_choice.currentText(), "Microphone")
+        self.assertEqual(self.window.process.arguments()[-1], "--mic")
+        self.assertEqual(self.window.history.toPlainText().strip(), "System caption")
+
+        self.window.pause_button.setChecked(False)
+        self.window.input_choice.setCurrentIndex(0)
+        self.assertTrue(self.wait_until(lambda: self.window.preview.text() == "Old preview"))
+        self.assertNotIn("--mic", self.window.process.arguments())
+        self.assertNotIn("Stale caption", self.window.history.toPlainText())
+
+    def test_initial_input_honors_cli_choice(self):
+        for options, expected in [
+            ({"mic": True}, ["--mic"]),
+            ({"source": "42"}, ["--source", "42"]),
+        ]:
+            with self.subTest(options=options):
+                window = SubtitleOverlay("unused", [], demo=True, settings=self.settings, **options)
+                self.assertEqual(window.input_choice.currentData(), expected)
+                window.close()
+
+    def wait_until(self, predicate):
+        for _ in range(100):
+            if predicate():
+                return True
+            QTest.qWait(20)
+        return False
 
     def test_backend_events_and_shutdown(self):
         helper = Path(self.temp.name) / "backend.py"
